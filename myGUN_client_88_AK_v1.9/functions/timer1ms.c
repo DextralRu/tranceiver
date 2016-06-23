@@ -1,0 +1,105 @@
+/**
+    @file    timer1ms.c
+    @author  Белоглазов В.А. ОАО "НПО РусБИТех", ЦСИ
+    @date    01.03.2015
+    @brief   Файл функции обработчика 1мс интервального таймера
+    Данный обработчик ведет отсчет времени нажатия спускового крючка и формирует все стадии формирования механизма выстрела.
+    Программная реализация выстрела выполняет формирование временных интервалов открытия-закрытия клапана, а так же загрузку
+    очередного патрона из магазина в патронник. Завершающую стадию формирования одиночного выстрела выполняет функция обработки
+    спускового крючка в обработчике АЦП.
+**/
+
+ISR(TIMER2_COMPB_vect) { 
+	if (timerEnable==1) {			//считаем время нажатия спускового рючка
+	    timer++;
+	    uint16_t tmp=timer/10;		//в пакете нас интересует с точностью 10мс
+	    DataToRF[8]=Hi(tmp);
+	    DataToRF[9]=Lo(tmp);
+	}							//так сделано, чтоб не получилось прихода прерывания по таймеру, когда данные подготовлены частично
+
+
+	if ((!CartrageTrigger) && (AmmoInTrunk==0) && ((FireStatus==3) || (FireStatus==4))) {	//патронник пустой, выстрелы совершены
+		if ((GETCARTRAGEAK==0)) {                               //магазин установлен
+	    		if (CartrageArray[1] > 0) {	//в магазине еще есть патроны?
+			CartrageArray[1]--;		//вынимаем один из магазина
+			DataToRF[2]=(DataToRF[2] & 0xE0) | CartrageArray[1];	//кол-во патронов в пакет
+			AmmoInTrunk=1;					//и кладем его в патронник
+			//DataToRF[1] |= (1<<7);				//это в пакет
+			DataToRF[0] |= (1<<6);				//это в пакет
+			}
+			EventFire=0;			//Флаг конца выстрела
+			DataToRF[1] &=~(1<<7);		//это в пакет
+		    	if (!GETSINGLEAK) {FireStatus=5;}		//процедура выстрела для одиночного завершена
+				else {
+					if (AmmoInTrunk==0) FireStatus=5;	//это был последний патрон при одиночной стрельбе
+						else FireStatus=0;              //это был последний патрон при стрельбе очередью
+				}			//процедура для очереди завершена
+		}
+	}
+
+
+	if ((FireStatus==2)) {      			//вторая стадия производства выстрела
+	    if (FireTimer>0) {                          //еще не кончилось время открытого клапана?
+	    	if (EventFire==0) {
+			FiredAmmoCount++; 
+			DataToRF[6]=FiredAmmoCount;
+			} //момент самого начала выстрела. Увеличиваем кол-во выстрелов.
+		EventFire=1;				//Флаг начала выстрела (ну и что, что каждый раз)
+		DataToRF[1] |=(1<<7);			//это в пакет
+		KLAPANAKON;                             //открываем клапан (ну и что, что каждый раз)
+		DataToRF[0]|=(1<<4);			//ударник ударил - в пакет
+		FireTimer--;				//уменьшаем время
+		}
+		else {                                  //Если времени на открывание больше нет
+		    if (FireDelay>0) {                  //Время на закрывание еще есть?
+			AmmoInTrunk=0;			//в патроннике теперь точно пусто (ну и что, что каждый раз)
+			KLAPANAKOFF;			//закрываем клапан (ну и что, что каждый раз)
+			DataToRF[0]&=~(1<<4);		//ударник взвелся - в пакет
+			FireDelay--;			//уменьшаем время закрывания клапана
+//			EventFire=0;			//Флаг конца выстрела
+//			DataToRF[1] &=~(1<<7);		//это в пакет
+			}
+			else {
+			    if (!GETSINGLEAK) {FireStatus=3;}		//процедура выстрела для одиночного завершена
+				else {FireStatus=4;}			//процедура для очереди завершена
+			    }
+		    }
+		}
+		else {
+			FireStatus=0; FireTimer=0; FireDelay=0;
+		}
+
+
+
+	if ((FireStatus==1) && (AmmoInTrunk==1)) {FireStatus=2; FireTimer=KlapanOnTime; FireDelay=PauseTime;} //подготовка данных для процедуры выстрела
+	if ((FireStatus==1) && (AmmoInTrunk==0)) {FireStatus=0; FireTimer=0; FireDelay=0;}
+
+
+
+
+
+
+
+
+
+
+
+/*
+	EEcount++;
+	if (EEcount>=5000) {
+		eeprom_write_byte(&eprom+0x100, DataToRF[0]);
+		eeprom_write_byte(&eprom+0x101, DataToRF[1]);
+		eeprom_write_byte(&eprom+0x102, DataToRF[2]);
+		eeprom_write_byte(&eprom+0x103, DataToRF[3]);
+		eeprom_write_byte(&eprom+0x104, DataToRF[4]);
+		eeprom_write_byte(&eprom+0x105, DataToRF[5]);
+		eeprom_write_byte(&eprom+0x106, DataToRF[6]);
+		eeprom_write_byte(&eprom+0x107, DataToRF[7]);
+		eeprom_write_byte(&eprom+0x108, DataToRF[8]);
+		eeprom_write_byte(&eprom+0x109, DataToRF[9]);
+	EEcount=0;
+	}
+*/
+//	if ((ADCSRA & 0x20) == 0 )	ADCSRA |= (1<<ADSC);			//Старт АЦП
+	TCNT0 = 0;					//предустановка счетчика таймера
+}
