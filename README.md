@@ -1,2 +1,2 @@
 # tranceiver
-NRF24L01+
+сс1101+avr
